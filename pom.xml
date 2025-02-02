@@ -30,6 +30,7 @@
         <module>url-shortener-demo</module>
         <module>jdbc</module>
         <module>coordination</module>
+        <module>coordination/recipes</module>
     </modules>
 
     <dependencyManagement>
