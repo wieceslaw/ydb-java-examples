@@ -16,5 +16,6 @@
 
     <modules>
         <module>describe-example</module>
+        <module>recipes</module>
     </modules>
 </project>
