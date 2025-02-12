@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.SemaphoreLease;
+import tech.ydb.coordination.description.SemaphoreDescription;
+import tech.ydb.coordination.settings.DescribeSemaphoreMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
@@ -16,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * May throw an exception if the current thread does not own the lock
@@ -51,6 +54,37 @@ public class InterProcessMutex implements InterProcessLock {
         this.session = session;
         this.data = data;
         this.semaphoreName = lockName;
+
+        session.addStateListener(new Consumer<CoordinationSession.State>() {
+            @Override
+            public void accept(CoordinationSession.State state) {
+                switch (state) {
+                    case RECONNECTING: {
+                        // TODO: Lock is not acquired nor released?
+                    }
+                    case RECONNECTED: {
+                        Result<SemaphoreDescription> result = session.describeSemaphore(
+                                semaphoreName,
+                                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
+                        ).join();
+                        if (!result.isSuccess()) {
+                            logger.error("Unable to describe semaphore {}", semaphoreName);
+                            return;
+                        }
+                        SemaphoreDescription semaphoreDescription = result.getValue();
+                        SemaphoreDescription.Session owner = semaphoreDescription.getOwnersList().getFirst();
+                        if (owner.getId() != session.getId()) {
+                            logger.warn(
+                                    "Session with id: {} lost lease after reconnection on semaphore: {}",
+                                    owner.getId(),
+                                    semaphoreName
+                            );
+                            threadData.clear();
+                        }
+                    }
+                }
+            }
+        });
     }
 
     public void acquire() throws Exception {
