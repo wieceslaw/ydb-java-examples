@@ -3,6 +3,8 @@ package tech.ydb.coordination.recipes.example.lib.lock;
 
 import com.google.common.collect.Maps;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.SemaphoreLease;
 import tech.ydb.core.Result;
@@ -18,9 +20,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * May throw an exception if the current thread does not own the lock
  */
-// TODO: add logs everywhere
 @ThreadSafe
 public class InterProcessMutex implements InterProcessLock {
+
+    private static final Logger logger = LoggerFactory.getLogger(InterProcessMutex.class);
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofMillis(100);
 
     private final CoordinationSession session;
     private final String semaphoreName;
@@ -50,15 +54,18 @@ public class InterProcessMutex implements InterProcessLock {
     }
 
     public void acquire() throws Exception {
+        logger.debug("Trying to acquire without timeout");
         acquireLock(null);
     }
 
     public boolean acquire(Duration duration) throws Exception {
+        logger.debug("Trying to acquire with deadline: {}", duration);
         Instant deadline = Instant.now().plus(duration);
         return acquireLock(deadline);
     }
 
     public void release() {
+        logger.debug("Trying to release");
         Thread currentThread = Thread.currentThread();
         LockData lockData = threadData.get(currentThread);
         if (lockData == null) {
@@ -107,6 +114,7 @@ public class InterProcessMutex implements InterProcessLock {
         LockData lockData = threadData.get(currentThread);
         if (lockData != null) {
             // re-entering
+            logger.debug("Already acquired lock: {}, re-entering", semaphoreName);
             lockData.lockCount.incrementAndGet();
             return true;
         }
@@ -117,25 +125,35 @@ public class InterProcessMutex implements InterProcessLock {
             threadData.put(currentThread, newLockData);
             return true;
         }
+        logger.debug("Unable to acquire lock");
         return false;
     }
 
     private SemaphoreLease internalLock(@Nullable Instant deadline) {
-        System.out.println("deadline: " + deadline);
+        int retryCount = 0;
         while (session.getState().isActive() && (deadline == null || Instant.now().isBefore(deadline))) {
+            retryCount++;
+
+            Duration timeout;
+            if (deadline == null) {
+                timeout = DEFAULT_TIMEOUT;
+            } else {
+                timeout = Duration.between(Instant.now(), deadline); // TODO: use external Clock instead of Instant.now()?
+            }
             Result<SemaphoreLease> leaseResult = session.acquireEphemeralSemaphore(
-                            semaphoreName, true, data, Duration.ofSeconds(5) // TODO: change to deadline
+                            semaphoreName, true, data, timeout // TODO: change Session API to use deadlines
                     )
                     .join();
             Status status = leaseResult.getStatus();
-            System.out.println(status);
+            logger.debug("Lease result status: {}", status);
+
             if (status.isSuccess()) {
-                System.out.println("success");
+                logger.debug("Successfully acquired the lock");
                 return leaseResult.getValue();
             }
 
             if (status.getCode() == StatusCode.TIMEOUT) {
-                System.out.println("trying to acquire lock again...");
+                logger.debug("Trying to acquire again, retries: {}", retryCount);
                 continue;
             }
 
@@ -143,9 +161,6 @@ public class InterProcessMutex implements InterProcessLock {
                 status.expectSuccess("Unable to retry acquiring semaphore");
                 return null;
             }
-        }
-        if (!session.getState().isActive()) {
-            throw new IllegalStateException("Session is not active");
         }
         return null;
     }

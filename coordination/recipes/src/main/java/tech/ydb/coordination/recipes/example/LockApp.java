@@ -10,13 +10,13 @@ import java.util.Scanner;
 
 public class LockApp {
 
+    CoordinationSession session;
     InterProcessLock lock;
 
     LockApp(CoordinationClient client) {
         client.createNode("examples/app").join().expectSuccess("cannot create coordination path");
-        CoordinationSession session = client.createSession("examples/app");
+        session = client.createSession("examples/app");
         session.connect().join().expectSuccess("cannot start coordination session");
-//        session.close();
         lock = new InterProcessMutex(
                 session,
                 "data".getBytes(),
@@ -27,13 +27,10 @@ public class LockApp {
     public void lock(Duration duration) {
         try {
             if (duration == null) {
-                System.out.println("Acquiring without timeout");
                 lock.acquire();
             } else {
-                System.out.println("Acquiring with timeout: " + duration);
                 lock.acquire(duration);
             }
-            System.out.println("Successfully acquired lock");
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -42,15 +39,22 @@ public class LockApp {
     public void release() {
         try {
             lock.release();
-            System.out.println("Successfully released lock");
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
+    private void reconnect() {
+        session.connect().join().expectSuccess("cannot start coordination session");
+    }
+
+    private boolean isAcquired() {
+        return lock.isAcquiredInThisProcess();
+    }
+
     public void run() {
         Scanner scanner = new Scanner(System.in);
-        System.out.println("Enter commands: lock [seconds] or release");
+        System.out.println("Enter commands: lock [seconds] | release | reconnect | ?");
 
         while (scanner.hasNextLine()) {
             String commandLine = scanner.nextLine().trim();
@@ -75,6 +79,12 @@ public class LockApp {
                     break;
                 case "release":
                     release();
+                    break;
+                case "reconnect":
+                    reconnect();
+                    break;
+                case "?":
+                    System.out.println("Lock is acquired: " + isAcquired());
                     break;
                 default:
                     System.out.println("Unknown command: " + command);
