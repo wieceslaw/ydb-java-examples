@@ -1,7 +1,6 @@
 package tech.ydb.coordination.recipes.example;
 
 import tech.ydb.coordination.CoordinationClient;
-import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.recipes.example.lib.lock.InterProcessLock;
 import tech.ydb.coordination.recipes.example.lib.lock.InterProcessMutex;
 
@@ -10,15 +9,13 @@ import java.util.Scanner;
 
 public class LockApp {
 
-    CoordinationSession session;
     InterProcessLock lock;
 
     LockApp(CoordinationClient client) {
         client.createNode("examples/app").join().expectSuccess("cannot create coordination path");
-        session = client.createSession("examples/app");
-        session.connect().join().expectSuccess("cannot start coordination session");
         lock = new InterProcessMutex(
-                session,
+                client,
+                "examples/app",
                 "data".getBytes(),
                 "default_lock"
         );
@@ -42,10 +39,6 @@ public class LockApp {
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    private void reconnect() {
-        session.connect().join().expectSuccess("cannot start coordination session");
     }
 
     private boolean isAcquired() {
@@ -79,9 +72,6 @@ public class LockApp {
                     break;
                 case "release":
                     release();
-                    break;
-                case "reconnect":
-                    reconnect();
                     break;
                 case "?":
                     System.out.println("Lock is acquired: " + isAcquired());
