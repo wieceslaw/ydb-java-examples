@@ -22,9 +22,6 @@ import tech.ydb.core.Result;
 import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
 
-/**
- * May throw an exception if the current thread does not own the lock
- */
 @ThreadSafe
 public class InterProcessSyncMutex implements InterProcessLock {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(1);
@@ -136,6 +133,14 @@ public class InterProcessSyncMutex implements InterProcessLock {
     @Override
     public boolean isAcquiredInThisProcess() {
         return processLease != null;
+    }
+
+    public void addStateListener(Consumer<CoordinationSession.State> listener) {
+        session.addStateListener(listener);
+    }
+
+    public void removeStateListener(Consumer<CoordinationSession.State> listener) {
+        session.removeStateListener(listener);
     }
 
     private boolean acquireLock(@Nullable Instant deadline) throws Exception {
