@@ -2,17 +2,24 @@ package tech.ydb.coordination.recipes.example.lib.lock;
 
 import java.time.Duration;
 
-public interface InterProcessLock {
-    void acquire() throws Exception;
+import tech.ydb.coordination.CoordinationSession;
+import tech.ydb.coordination.recipes.example.lib.util.Listenable;
 
-    boolean acquire(Duration waitDuration) throws Exception;
-
-    void release() throws Exception;
+public interface InterProcessLock extends Listenable<CoordinationSession.State> {
+    void acquire() throws Exception, LockAlreadyAcquiredException, LockAcquireFailedException;
 
     /**
-     * Returns true if the mutex is acquired by a thread in this JVM
-     *
-     * @return true/false
+     * @return true - if successfully acquired lock, false - if lock waiting time expired
+     */
+    boolean acquire(Duration waitDuration) throws Exception, LockAlreadyAcquiredException, LockAcquireFailedException;
+
+    /**
+     * @return false if nothing to release
+     */
+    boolean release() throws Exception;
+
+    /**
+     * @return true if the lock is acquired by a thread in this JVM
      */
     boolean isAcquiredInThisProcess();
 }

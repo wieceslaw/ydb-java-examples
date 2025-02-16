@@ -3,9 +3,14 @@ package tech.ydb.coordination.recipes.example.lib.lock;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.function.Consumer;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -16,80 +21,91 @@ import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.SemaphoreLease;
 import tech.ydb.coordination.description.SemaphoreDescription;
-import tech.ydb.coordination.settings.CoordinationSessionSettings;
+import tech.ydb.coordination.recipes.example.lib.Participant;
+import tech.ydb.coordination.recipes.example.lib.util.SessionListenerWrapper;
+import tech.ydb.coordination.recipes.example.lib.util.Listenable;
+import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
 import tech.ydb.coordination.settings.DescribeSemaphoreMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
 
 @ThreadSafe
-public class InterProcessSyncMutex implements InterProcessLock {
+public class InterProcessSyncMutex implements InterProcessLock, ListenableProvider<CoordinationSession.State> {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(1);
     private static final Logger logger = LoggerFactory.getLogger(InterProcessSyncMutex.class);
 
+    private final Lock leaseLock = new ReentrantLock();
     private final CoordinationSession session;
+    private final CompletableFuture<Status> sessionConnectionTask;
+    private final SessionListenerWrapper sessionListenerWrapper;
     private final String semaphoreName;
-    private final byte[] data;
+    private final String coordinationNodePath;
 
     private volatile SemaphoreLease processLease = null;
 
     public InterProcessSyncMutex(
             CoordinationClient client,
             String coordinationNodePath,
-            byte[] data,
             String lockName
     ) {
-        ExecutorService sessionExecutorService = Executors.newSingleThreadExecutor();
-        this.session = client.createSession(
-                coordinationNodePath,
-                CoordinationSessionSettings.newBuilder()
-                        .withExecutor(sessionExecutorService)
-                .build()
-        );
-        this.data = data;
+        this.coordinationNodePath = coordinationNodePath;
+        this.session = client.createSession(coordinationNodePath);
+        this.sessionListenerWrapper = new SessionListenerWrapper(session);
         this.semaphoreName = lockName;
 
-        this.session.connect().join().expectSuccess("Unable to create session");
-        session.addStateListener(new Consumer<CoordinationSession.State>() {
-            @Override
-            public void accept(CoordinationSession.State state) {
-                switch (state) {
-                    case RECONNECTING: {
-                        // TODO: Lock is not acquired nor released?
-                        break;
-                    }
-                    case RECONNECTED: {
-                        Result<SemaphoreDescription> result = session.describeSemaphore(
-                                semaphoreName,
-                                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
-                        ).join();
-                        if (!result.isSuccess()) {
-                            logger.error("Unable to describe semaphore {}", semaphoreName);
-                            return;
-                        }
-                        SemaphoreDescription semaphoreDescription = result.getValue();
-                        SemaphoreDescription.Session owner = semaphoreDescription.getOwnersList().getFirst();
-                        if (owner.getId() != session.getId()) {
-                            logger.warn(
-                                    "Session with id: {} lost lease after reconnection on semaphore: {}",
-                                    owner.getId(),
-                                    semaphoreName
-                            );
-                            release();
-                        }
-                        break;
-                    }
-                    case CLOSED: {
-                        logger.debug("Session is CLOSED, releasing lock");
-                        release();
-                        break;
-                    }
-                    case LOST: {
-                        logger.debug("Session is LOST, releasing lock");
-                        release();
-                        break;
-                    }
+        this.sessionConnectionTask = session.connect().thenApply(status -> {
+            logger.debug("Session connection status: " + status);
+            return status;
+        });
+        session.addStateListener(state -> {
+            switch (state) {
+                case RECONNECTED: {
+                    logger.debug("Session RECONNECTED");
+                    reconnect();
+                    break;
                 }
+                case CLOSED: {
+                    logger.debug("Session CLOSED, releasing lock");
+                    internalRelease();
+                    break;
+                }
+                case LOST: {
+                    logger.debug("Session LOST, releasing lock");
+                    internalRelease();
+                    break;
+                }
+            }
+        });
+    }
+
+    private CoordinationSession connectedSession() {
+        try {
+            sessionConnectionTask.get().expectSuccess("Unable to connect to session on: " + coordinationNodePath);
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+        return session;
+    }
+
+    private void reconnect() {
+        connectedSession().describeSemaphore(
+                semaphoreName,
+                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
+        ).thenAccept(result -> {
+            if (!result.isSuccess()) {
+                logger.error("Unable to describe semaphore {}", semaphoreName);
+                return;
+            }
+            SemaphoreDescription semaphoreDescription = result.getValue();
+            SemaphoreDescription.Session owner = semaphoreDescription.getOwnersList().getFirst();
+            if (owner.getId() != session.getId()) {
+                logger.warn(
+                        "Current session with id: {} lost lease after reconnection on semaphore: {}",
+                        owner.getId(),
+                        semaphoreName
+                );
+                internalRelease();
             }
         });
     }
@@ -97,37 +113,44 @@ public class InterProcessSyncMutex implements InterProcessLock {
     @Override
     public void acquire() throws Exception {
         logger.debug("Trying to acquire without timeout");
-        acquireLock(null);
+        safeAcquire(null);
     }
 
     @Override
     public boolean acquire(Duration duration) throws Exception {
         logger.debug("Trying to acquire with deadline: {}", duration);
         Instant deadline = Instant.now().plus(duration);
-        return acquireLock(deadline);
+        return safeAcquire(deadline);
     }
 
     @Override
-    public void release() {
+    public boolean release() throws Exception {
+        return internalRelease().get();
+    }
+
+    private CompletableFuture<Boolean> internalRelease() {
         logger.debug("Trying to release");
         if (processLease == null) {
             logger.debug("Already released");
-            // TODO: throw Exception/return false if already released?
-            return;
+            return CompletableFuture.completedFuture(false);
         }
 
-        if (processLease != null) {
-            synchronized (this) {
-                if (processLease != null) {
-                    processLease.release().join();
-                    processLease = null;
+        leaseLock.lock();
+        try {
+            if (processLease != null) {
+                return processLease.release().thenApply(it -> {
                     logger.debug("Released lock");
-                }
+                    processLease = null;
+                    leaseLock.unlock();
+                    return true;
+                });
             }
+        } finally {
+            leaseLock.unlock();
         }
 
         logger.debug("Already released");
-        // TODO: throw Exception/return false if already released?
+        return CompletableFuture.completedFuture(false);
     }
 
     @Override
@@ -135,35 +158,42 @@ public class InterProcessSyncMutex implements InterProcessLock {
         return processLease != null;
     }
 
-    public void addStateListener(Consumer<CoordinationSession.State> listener) {
-        session.addStateListener(listener);
-    }
+    // TODO: implement interruption
 
-    public void removeStateListener(Consumer<CoordinationSession.State> listener) {
-        session.removeStateListener(listener);
-    }
-
-    private boolean acquireLock(@Nullable Instant deadline) throws Exception {
-        if (processLease == null) {
+    /**
+     * @param deadline
+     * @return true - if successfully acquired lock
+     * @throws Exception
+     * @throws LockAlreadyAcquiredException
+     */
+    private boolean safeAcquire(@Nullable Instant deadline) throws Exception, LockAlreadyAcquiredException {
+        if (processLease != null) {
             logger.debug("Already acquired lock: {}", semaphoreName);
-            return false;
+            throw new LockAlreadyAcquiredException(semaphoreName);
         }
 
-        synchronized (this) {
-            if (processLease == null) {
-                SemaphoreLease lease = internalLock(deadline);
-                if (lease != null) {
-                    this.processLease = lease;
-                    logger.debug("Successfully acquired lock: {}", semaphoreName);
-                    return true;
-                }
+        leaseLock.lock();
+        try {
+            if (processLease != null) {
+                logger.debug("Already acquired lock: {}", semaphoreName);
+                throw new LockAlreadyAcquiredException(semaphoreName);
             }
+
+            SemaphoreLease lease = internalLock(deadline);
+            if (lease != null) {
+                processLease = lease;
+                logger.debug("Successfully acquired lock: {}", semaphoreName);
+                return true;
+            }
+        } finally {
+            leaseLock.unlock();
         }
-        logger.debug("Already acquired lock: {}", semaphoreName);
+
+        logger.debug("Unable to acquire lock: {}", semaphoreName);
         return false;
     }
 
-    private SemaphoreLease internalLock(@Nullable Instant deadline) {
+    private SemaphoreLease internalLock(@Nullable Instant deadline) throws ExecutionException, InterruptedException {
         int retryCount = 0;
         while (session.getState().isActive() && (deadline == null || Instant.now().isBefore(deadline))) {
             retryCount++;
@@ -172,12 +202,27 @@ public class InterProcessSyncMutex implements InterProcessLock {
             if (deadline == null) {
                 timeout = DEFAULT_TIMEOUT;
             } else {
-                timeout = Duration.between(Instant.now(), deadline); // TODO: use external Clock instead of Instant.now()?
+                timeout = Duration.between(Instant.now(), deadline); // TODO: use external Clock instead of Instant?
             }
-            Result<SemaphoreLease> leaseResult = session.acquireEphemeralSemaphore(
-                            semaphoreName, true, data, timeout // TODO: change Session API to use deadlines
-                    )
-                    .join();
+            CompletableFuture<Result<SemaphoreLease>> acquireTask = connectedSession().acquireEphemeralSemaphore(
+                    semaphoreName, true, null, timeout // TODO: change Session API to use deadlines
+            );
+            Result<SemaphoreLease> leaseResult;
+            try {
+                leaseResult = acquireTask.get();
+            } catch (InterruptedException e) {
+                // If acquire is interrupted, then release immediately
+                Thread.currentThread().interrupt();
+                acquireTask.thenAccept(acquireResult -> {
+                    if (!acquireResult.getStatus().isSuccess()) {
+                        return;
+                    }
+                    SemaphoreLease lease = acquireResult.getValue();
+                    lease.release();
+                });
+                throw e;
+            }
+
             Status status = leaseResult.getStatus();
             logger.debug("Lease result status: {}", status);
 
@@ -196,7 +241,53 @@ public class InterProcessSyncMutex implements InterProcessLock {
                 return null;
             }
         }
-        return null;
+
+        // TODO: handle timeout and error differently
+        throw new LockAcquireFailedException(coordinationNodePath + '/' + semaphoreName);
     }
 
+    // TODO: rewrite into another class?
+    public List<Participant> getParticipants() {
+        Result<SemaphoreDescription> result = session.describeSemaphore(
+                semaphoreName,
+                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
+        ).join();
+        result.getStatus().expectSuccess("Unable to describe semaphore: " + coordinationNodePath);
+        SemaphoreDescription semaphoreDescription = result.getValue();
+        Stream<Participant> waiters = semaphoreDescription.getWaitersList().stream().map(it -> new Participant(
+                it.getId(),
+                Arrays.copyOf(it.getData(), it.getData().length),
+                it.getCount(),
+                false
+        ));
+        Stream<Participant> owners = semaphoreDescription.getOwnersList().stream().map(it -> new Participant(
+                it.getId(),
+                Arrays.copyOf(it.getData(), it.getData().length),
+                it.getCount(),
+                false
+        ));
+        return Stream.concat(owners, waiters).collect(Collectors.toList());
+    }
+
+    // TODO: rewrite into another class?
+    public List<Participant> getOwners() {
+        Result<SemaphoreDescription> result = session.describeSemaphore(
+                semaphoreName,
+                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
+        ).join();
+        result.getStatus().expectSuccess("Unable to describe semaphore: " + coordinationNodePath);
+        SemaphoreDescription semaphoreDescription = result.getValue();
+        Stream<Participant> owners = semaphoreDescription.getOwnersList().stream().map(it -> new Participant(
+                it.getId(),
+                Arrays.copyOf(it.getData(), it.getData().length),
+                it.getCount(),
+                false
+        ));
+        return owners.collect(Collectors.toList());
+    }
+
+    @Override
+    public Listenable<CoordinationSession.State> getListenable() {
+        return sessionListenerWrapper;
+    }
 }
