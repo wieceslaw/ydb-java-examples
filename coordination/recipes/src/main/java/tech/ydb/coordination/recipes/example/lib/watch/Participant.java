@@ -1,4 +1,4 @@
-package tech.ydb.coordination.recipes.example.lib;
+package tech.ydb.coordination.recipes.example.lib.watch;
 
 import java.util.Arrays;
 import java.util.Objects;

@@ -14,9 +14,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
-import tech.ydb.coordination.recipes.example.lib.Participant;
+import tech.ydb.coordination.recipes.example.lib.watch.Participant;
 import tech.ydb.coordination.recipes.example.lib.lock.InterProcessSyncMutex;
-import tech.ydb.coordination.recipes.example.lib.lock.SemaphoreWatchAdapter;
+import tech.ydb.coordination.recipes.example.lib.watch.SemaphoreWatchAdapter;
 import tech.ydb.coordination.recipes.example.lib.util.Listenable;
 import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
 

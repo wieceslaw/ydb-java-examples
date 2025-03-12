@@ -1,4 +1,4 @@
-package tech.ydb.coordination.recipes.example.lib.lock;
+package tech.ydb.coordination.recipes.example.lib.watch;
 
 import java.io.Closeable;
 import java.util.Collections;
@@ -15,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.description.SemaphoreDescription;
 import tech.ydb.coordination.description.SemaphoreWatcher;
-import tech.ydb.coordination.recipes.example.lib.Participant;
 import tech.ydb.coordination.settings.DescribeSemaphoreMode;
 import tech.ydb.coordination.settings.WatchSemaphoreMode;
 import tech.ydb.core.Result;
