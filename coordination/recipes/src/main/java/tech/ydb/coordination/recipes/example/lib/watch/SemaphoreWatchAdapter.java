@@ -62,31 +62,31 @@ public class SemaphoreWatchAdapter implements Closeable {
 
     public List<Participant> getOwners() {
         // TODO: block until initialized or throw exception or return default value or return Optional.empty()
-        Preconditions.checkState(watchData == null, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet fetched state");
 
         return Collections.unmodifiableList(watchData.owners); // TODO: copy Participant.data[]?
     }
 
     public List<Participant> getWaiters() {
-        Preconditions.checkState(watchData == null, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet fetched state");
 
         return Collections.unmodifiableList(watchData.waiters); // TODO: copy Participant.data[]?
     }
 
     public List<Participant> getParticipants() {
-        Preconditions.checkState(watchData == null, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet fetched state");
 
         return Collections.unmodifiableList(watchData.participants); // TODO: copy Participant.data[]?
     }
 
     public long getCount() {
-        Preconditions.checkState(watchData == null, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet fetched state");
 
         return watchData.count;
     }
 
     public byte[] getData() {
-        Preconditions.checkState(watchData == null, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet fetched state");
 
         return watchData.data.clone();
     }
