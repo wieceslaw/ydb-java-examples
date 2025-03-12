@@ -62,31 +62,31 @@ public class SemaphoreWatchAdapter implements Closeable {
 
     public List<Participant> getOwners() {
         // TODO: block until initialized or throw exception or return default value or return Optional.empty()
-        Preconditions.checkState(state.get() == State.STARTED, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet started");
 
         return Collections.unmodifiableList(watchData.owners); // TODO: copy Participant.data[]?
     }
 
     public List<Participant> getWaiters() {
-        Preconditions.checkState(state.get() == State.STARTED, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet started");
 
         return Collections.unmodifiableList(watchData.waiters); // TODO: copy Participant.data[]?
     }
 
     public List<Participant> getParticipants() {
-        Preconditions.checkState(state.get() == State.STARTED, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet started");
 
         return Collections.unmodifiableList(watchData.participants); // TODO: copy Participant.data[]?
     }
 
     public long getCount() {
-        Preconditions.checkState(state.get() == State.STARTED, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet started");
 
         return watchData.count;
     }
 
     public byte[] getData() {
-        Preconditions.checkState(state.get() == State.STARTED, "Is not yet started");
+        Preconditions.checkState(watchData == null, "Is not yet started");
 
         return watchData.data.clone();
     }
@@ -159,7 +159,6 @@ public class SemaphoreWatchAdapter implements Closeable {
                 waitersList,
                 ownersList
         );
-        state.compareAndSet(State.CREATED, State.STARTED);
     }
 
     private synchronized void stopWatch() {
