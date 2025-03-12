@@ -3,14 +3,10 @@ package tech.ydb.coordination.recipes.example.lib.lock;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -21,7 +17,6 @@ import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.SemaphoreLease;
 import tech.ydb.coordination.description.SemaphoreDescription;
-import tech.ydb.coordination.recipes.example.lib.Participant;
 import tech.ydb.coordination.recipes.example.lib.util.SessionListenerWrapper;
 import tech.ydb.coordination.recipes.example.lib.util.Listenable;
 import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
@@ -246,48 +241,12 @@ public class InterProcessSyncMutex implements InterProcessLock, ListenableProvid
         throw new LockAcquireFailedException(coordinationNodePath + '/' + semaphoreName);
     }
 
-    // TODO: rewrite into another class?
-    public List<Participant> getParticipants() {
-        Result<SemaphoreDescription> result = session.describeSemaphore(
-                semaphoreName,
-                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
-        ).join();
-        result.getStatus().expectSuccess("Unable to describe semaphore: " + coordinationNodePath);
-        SemaphoreDescription semaphoreDescription = result.getValue();
-        Stream<Participant> waiters = semaphoreDescription.getWaitersList().stream().map(it -> new Participant(
-                it.getId(),
-                Arrays.copyOf(it.getData(), it.getData().length),
-                it.getCount(),
-                false
-        ));
-        Stream<Participant> owners = semaphoreDescription.getOwnersList().stream().map(it -> new Participant(
-                it.getId(),
-                Arrays.copyOf(it.getData(), it.getData().length),
-                it.getCount(),
-                false
-        ));
-        return Stream.concat(owners, waiters).collect(Collectors.toList());
-    }
-
-    // TODO: rewrite into another class?
-    public List<Participant> getOwners() {
-        Result<SemaphoreDescription> result = session.describeSemaphore(
-                semaphoreName,
-                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
-        ).join();
-        result.getStatus().expectSuccess("Unable to describe semaphore: " + coordinationNodePath);
-        SemaphoreDescription semaphoreDescription = result.getValue();
-        Stream<Participant> owners = semaphoreDescription.getOwnersList().stream().map(it -> new Participant(
-                it.getId(),
-                Arrays.copyOf(it.getData(), it.getData().length),
-                it.getCount(),
-                false
-        ));
-        return owners.collect(Collectors.toList());
-    }
-
     @Override
     public Listenable<CoordinationSession.State> getListenable() {
         return sessionListenerWrapper;
+    }
+
+    public CoordinationSession getSession() {
+        return session;
     }
 }

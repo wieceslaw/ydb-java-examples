@@ -16,6 +16,7 @@ import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.recipes.example.lib.Participant;
 import tech.ydb.coordination.recipes.example.lib.lock.InterProcessSyncMutex;
+import tech.ydb.coordination.recipes.example.lib.lock.SemaphoreWatchAdapter;
 import tech.ydb.coordination.recipes.example.lib.util.Listenable;
 import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
 
@@ -28,11 +29,13 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
     private final String semaphoreName;
     private final ExecutorService electionExecutor;
     private final InterProcessSyncMutex lock;
+    private final SemaphoreWatchAdapter semaphoreWatchAdapter;
 
     private AtomicReference<State> state = new AtomicReference<>(State.STARTED);
     private volatile boolean autoRequeue = false;
     private volatile boolean isLeader = false;
     private Future<Void> electionTask = null;
+
 
     private enum State { // TODO: needs third state (CREATED)?
         STARTED,
@@ -65,6 +68,8 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
                 coordinationNodePath,
                 semaphoreName
         );
+        this.semaphoreWatchAdapter = new SemaphoreWatchAdapter(lock.getSession(), semaphoreName);
+        semaphoreWatchAdapter.start();
     }
 
     public boolean isLeader() {
@@ -103,10 +108,7 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
                     try {
                         doWork();
                     } finally {
-                        electionTask = null;
-                        if (autoRequeue) { // TODO: requeue if critical exception?
-                            enqueueElection();
-                        }
+                        finishTask();
                     }
                     return null;
                 }
@@ -151,25 +153,37 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
         }
     }
 
+    private synchronized void finishTask() {
+        electionTask = null;
+        if (autoRequeue) { // TODO: requeue if critical exception?
+            enqueueElection();
+        }
+    }
+
     private boolean isQueued() {
         return electionTask != null;
     }
 
     public List<Participant> getParticipants() {
-        return lock.getParticipants();
+        return semaphoreWatchAdapter.getParticipants();
     }
 
     public Optional<Participant> getLeader() {
-        return lock.getOwners().stream().findFirst();
+        return semaphoreWatchAdapter.getOwners().stream().findFirst();
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         Preconditions.checkState(state.compareAndSet(State.STARTED, State.CLOSED), "Already closed");
 
-        electionTask.cancel(true);
+        Future<Void> task = electionTask;
+        if (task != null) {
+            task.cancel(true);
+        }
+
         electionTask = null;
         electionExecutor.close();
+        semaphoreWatchAdapter.close();
         getListenable().clearListeners();
     }
 
