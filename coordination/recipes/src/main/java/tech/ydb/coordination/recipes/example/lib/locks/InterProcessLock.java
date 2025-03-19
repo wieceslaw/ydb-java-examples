@@ -1,4 +1,4 @@
-package tech.ydb.coordination.recipes.example.lib.lock;
+package tech.ydb.coordination.recipes.example.lib.locks;
 
 import java.time.Duration;
 

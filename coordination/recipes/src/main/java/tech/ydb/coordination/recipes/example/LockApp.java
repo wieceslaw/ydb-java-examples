@@ -1,8 +1,8 @@
 package tech.ydb.coordination.recipes.example;
 
 import tech.ydb.coordination.CoordinationClient;
-import tech.ydb.coordination.recipes.example.lib.lock.InterProcessLock;
-import tech.ydb.coordination.recipes.example.lib.lock.InterProcessMutex;
+import tech.ydb.coordination.recipes.example.lib.locks.InterProcessLock;
+import tech.ydb.coordination.recipes.example.lib.locks.InterProcessMutex;
 
 import java.time.Duration;
 import java.util.Scanner;

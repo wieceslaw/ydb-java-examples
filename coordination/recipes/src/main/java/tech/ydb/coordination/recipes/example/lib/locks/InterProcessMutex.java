@@ -1,5 +1,4 @@
-package tech.ydb.coordination.recipes.example.lib.lock;
-
+package tech.ydb.coordination.recipes.example.lib.locks;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -26,9 +25,9 @@ import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
 
 @ThreadSafe
-public class InterProcessSyncMutex implements InterProcessLock, ListenableProvider<CoordinationSession.State> {
-    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(1);
-    private static final Logger logger = LoggerFactory.getLogger(InterProcessSyncMutex.class);
+public class InterProcessMutex implements InterProcessLock, ListenableProvider<CoordinationSession.State> {
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+    private static final Logger logger = LoggerFactory.getLogger(InterProcessMutex.class);
 
     private final Lock leaseLock = new ReentrantLock();
     private final CoordinationSession session;
@@ -39,7 +38,7 @@ public class InterProcessSyncMutex implements InterProcessLock, ListenableProvid
 
     private volatile SemaphoreLease processLease = null;
 
-    public InterProcessSyncMutex(
+    public InterProcessMutex(
             CoordinationClient client,
             String coordinationNodePath,
             String lockName
@@ -190,7 +189,7 @@ public class InterProcessSyncMutex implements InterProcessLock, ListenableProvid
 
     private SemaphoreLease internalLock(@Nullable Instant deadline) throws ExecutionException, InterruptedException {
         int retryCount = 0;
-        while (session.getState().isActive() && (deadline == null || Instant.now().isBefore(deadline))) {
+        while (connectedSession().getState().isActive() && (deadline == null || Instant.now().isBefore(deadline))) {
             retryCount++;
 
             Duration timeout;
@@ -238,7 +237,7 @@ public class InterProcessSyncMutex implements InterProcessLock, ListenableProvid
         }
 
         // TODO: handle timeout and error differently
-        throw new LockAcquireFailedException(coordinationNodePath + '/' + semaphoreName);
+        throw new LockAcquireFailedException(coordinationNodePath, semaphoreName);
     }
 
     @Override
