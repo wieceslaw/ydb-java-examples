@@ -26,7 +26,7 @@ import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
 
 @ThreadSafe
-class LockInternals implements ListenableProvider<CoordinationSession.State>, Closeable {
+public class LockInternals implements ListenableProvider<CoordinationSession.State>, Closeable {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     private static final Logger logger = LoggerFactory.getLogger(LockInternals.class);
 
@@ -38,7 +38,7 @@ class LockInternals implements ListenableProvider<CoordinationSession.State>, Cl
     private CompletableFuture<Status> sessionConnectionTask = null;
     private volatile SemaphoreLease processLease = null; // TODO: volatile?
 
-    LockInternals(
+    public LockInternals(
             CoordinationClient client,
             String coordinationNodePath,
             String lockName
@@ -110,9 +110,25 @@ class LockInternals implements ListenableProvider<CoordinationSession.State>, Cl
         });
     }
 
-    public boolean tryAcquire(@Nullable Duration duration, boolean exclusive, byte[] data) throws Exception {
-        logger.debug("Trying to acquire with deadline: {}", duration);
-        Instant deadline = Instant.now().plus(duration);
+    public byte[] getDataSync() {
+        // TODO: Implement
+        CoordinationSession coordinationSession = connectedSession();
+        return coordinationSession.describeSemaphore(semaphoreName, DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS)
+                .get()
+                .getValue()
+                .getData();
+    }
+
+    public boolean update(byte[] data) throws Exception {
+        // TODO: Implement
+        CoordinationSession coordinationSession = connectedSession();
+        Status status = coordinationSession.updateSemaphore(semaphoreName, data).get();// TODO: add retries
+        return status.isSuccess();
+    }
+
+    public boolean tryAcquire(@Nullable Duration timeout, boolean exclusive, byte[] data) throws Exception {
+        logger.debug("Trying to acquire with deadline: {}", timeout);
+        Instant deadline = Instant.now().plus(timeout);
         return safeAcquire(deadline, exclusive, data);
     }
 

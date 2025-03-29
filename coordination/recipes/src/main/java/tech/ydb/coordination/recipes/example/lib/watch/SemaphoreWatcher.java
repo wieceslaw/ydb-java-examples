@@ -2,62 +2,55 @@ package tech.ydb.coordination.recipes.example.lib.watch;
 
 import java.io.Closeable;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.description.SemaphoreDescription;
-import tech.ydb.coordination.description.SemaphoreWatcher;
+import tech.ydb.coordination.recipes.example.lib.util.Listenable;
+import tech.ydb.coordination.recipes.example.lib.util.ListenableAdder;
+import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
+import tech.ydb.coordination.recipes.example.lib.util.ListenerWrapper;
 import tech.ydb.coordination.settings.DescribeSemaphoreMode;
 import tech.ydb.coordination.settings.WatchSemaphoreMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.Status;
 
-public class SemaphoreWatchAdapter implements Closeable {
-    private static final Logger logger = LoggerFactory.getLogger(SemaphoreWatchAdapter.class);
+public class SemaphoreWatcher implements ListenableAdder<WatchData>, ListenableProvider<WatchData>, Closeable {
+    private static final Logger logger = LoggerFactory.getLogger(SemaphoreWatcher.class);
 
     private final CoordinationSession session;
     private final String semaphoreName;
+    private final ListenerWrapper<WatchData> listenableWrapper;
 
     private AtomicReference<State> state;
     private Future<Void> watchTask;
     private volatile WatchData watchData;
+    private Set<Consumer<WatchData>> listeners;
 
-    private enum State {
-        CREATED,
-        STARTED,
-        CLOSED
-    }
-
-    private class WatchData {
-        final long count;
-        final byte[] data;
-        final List<Participant> waiters;
-        final List<Participant> owners;
-        final List<Participant> participants;
-
-        WatchData(long count, byte[] data, List<Participant> waiters, List<Participant> owners) {
-            this.count = count;
-            this.data = data;
-            this.waiters = waiters;
-            this.owners = owners;
-            this.participants = Stream.concat(owners.stream(), waiters.stream()).collect(Collectors.toList());
-        }
-    }
-
-    public SemaphoreWatchAdapter(CoordinationSession session, String semaphoreName) {
+    public SemaphoreWatcher(CoordinationSession session, String semaphoreName) {
         this.session = session;
         this.semaphoreName = semaphoreName;
         this.state = new AtomicReference<>(State.CREATED);
         this.watchTask = null;
         this.watchData = null;
+        this.listeners = new HashSet<>();
+        this.listenableWrapper = new ListenerWrapper<>(this);
+    }
+
+    private enum State {
+        CREATED,
+        STARTED,
+        CLOSED
     }
 
     public List<Participant> getOwners() {
@@ -133,7 +126,7 @@ public class SemaphoreWatchAdapter implements Closeable {
             if (!status.isSuccess()) {
                 return CompletableFuture.completedFuture(status);
             }
-            SemaphoreWatcher watcher = result.getValue();
+            tech.ydb.coordination.description.SemaphoreWatcher watcher = result.getValue();
             saveWatchState(watcher.getDescription());
             return watcher.getChangedFuture().thenApply(Result::getStatus);
         });
@@ -159,6 +152,11 @@ public class SemaphoreWatchAdapter implements Closeable {
                 waitersList,
                 ownersList
         );
+        notifyListeners();
+    }
+
+    private void notifyListeners() {
+        listeners.forEach(listener -> listener.accept(watchData));
     }
 
     private synchronized void stopWatch() {
@@ -167,6 +165,21 @@ public class SemaphoreWatchAdapter implements Closeable {
             task.cancel(true);
         }
         watchTask = null;
+    }
+
+    @Override
+    public Listenable<WatchData> getListenable() {
+        return listenableWrapper;
+    }
+
+    @Override
+    public void addListener(Consumer<WatchData> listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void removeListener(Consumer<WatchData> listener) {
+        listeners.remove(listener);
     }
 
     @Override

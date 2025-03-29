@@ -163,14 +163,14 @@ public class InterProcessMutex implements InterProcessLock, ListenableProvider<C
     private boolean safeAcquire(@Nullable Instant deadline) throws Exception, LockAlreadyAcquiredException {
         if (processLease != null) {
             logger.debug("Already acquired lock: {}", semaphoreName);
-            throw new LockAlreadyAcquiredException(semaphoreName);
+            throw new LockAlreadyAcquiredException(coordinationNodePath, semaphoreName);
         }
 
         leaseLock.lock();
         try {
             if (processLease != null) {
                 logger.debug("Already acquired lock: {}", semaphoreName);
-                throw new LockAlreadyAcquiredException(semaphoreName);
+                throw new LockAlreadyAcquiredException(coordinationNodePath, semaphoreName);
             }
 
             SemaphoreLease lease = internalLock(deadline);

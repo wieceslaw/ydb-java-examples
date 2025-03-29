@@ -16,7 +16,7 @@ import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.recipes.example.lib.watch.Participant;
 import tech.ydb.coordination.recipes.example.lib.locks.InterProcessMutex;
-import tech.ydb.coordination.recipes.example.lib.watch.SemaphoreWatchAdapter;
+import tech.ydb.coordination.recipes.example.lib.watch.SemaphoreWatcher;
 import tech.ydb.coordination.recipes.example.lib.util.Listenable;
 import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
 
@@ -29,7 +29,7 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
     private final String semaphoreName;
     private final ExecutorService electionExecutor;
     private final InterProcessMutex lock;
-    private final SemaphoreWatchAdapter semaphoreWatchAdapter;
+    private final SemaphoreWatcher semaphoreWatchAdapter;
 
     private AtomicReference<State> state = new AtomicReference<>(State.STARTED);
     private volatile boolean autoRequeue = false;
@@ -68,7 +68,7 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
                 coordinationNodePath,
                 semaphoreName
         );
-        this.semaphoreWatchAdapter = new SemaphoreWatchAdapter(lock.getSession(), semaphoreName);
+        this.semaphoreWatchAdapter = new SemaphoreWatcher(lock.getSession(), semaphoreName);
         semaphoreWatchAdapter.start();
     }
 
