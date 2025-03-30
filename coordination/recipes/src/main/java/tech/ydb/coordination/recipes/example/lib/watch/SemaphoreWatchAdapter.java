@@ -26,7 +26,7 @@ public class SemaphoreWatchAdapter implements Closeable {
     private final CoordinationSession session;
     private final String semaphoreName;
 
-    private AtomicReference<State> state;
+    private final AtomicReference<State> state;
     private Future<Void> watchTask;
     private volatile WatchData watchData;
 

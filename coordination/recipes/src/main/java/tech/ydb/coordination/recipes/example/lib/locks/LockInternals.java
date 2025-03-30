@@ -26,7 +26,7 @@ import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
 
 @ThreadSafe
-class LockInternals implements ListenableProvider<CoordinationSession.State>, Closeable {
+public class LockInternals implements ListenableProvider<CoordinationSession.State>, Closeable {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     private static final Logger logger = LoggerFactory.getLogger(LockInternals.class);
 
@@ -59,6 +59,7 @@ class LockInternals implements ListenableProvider<CoordinationSession.State>, Cl
             switch (state) {
                 case RECONNECTED: {
                     logger.debug("Session RECONNECTED");
+                    // TODO: check if session id is the same
                     reconnect();
                     break;
                 }
@@ -116,6 +117,9 @@ class LockInternals implements ListenableProvider<CoordinationSession.State>, Cl
         return safeAcquire(deadline, exclusive, data);
     }
 
+    /**
+     * @return true if lock was released, false if lock was not even acquired
+     */
     public boolean release() {
         return internalRelease();
     }
