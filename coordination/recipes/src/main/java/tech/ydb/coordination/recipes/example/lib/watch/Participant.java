@@ -9,7 +9,7 @@ public class Participant {
     private final long count;
     private final boolean isLeader;
 
-    public Participant(long id, byte[] data, long count, boolean isLeader) {
+    Participant(long id, byte[] data, long count, boolean isLeader) {
         this.id = id;
         this.data = data;
         this.count = count;

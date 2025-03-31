@@ -38,7 +38,7 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     private CompletableFuture<Status> sessionConnectionTask = null;
     private volatile SemaphoreLease processLease = null; // TODO: volatile?
 
-    LockInternals(
+    public LockInternals(
             CoordinationClient client,
             String coordinationNodePath,
             String lockName
@@ -148,9 +148,6 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     /**
      * @param deadline
      * @return true - if successfully acquired lock
-     * @throws Exception
-     * @throws LockAlreadyAcquiredException
-     * @throws LockAcquireFailedException
      */
     // TODO: deadlock? Move synchronized?
     private synchronized boolean safeAcquire(

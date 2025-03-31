@@ -4,7 +4,7 @@ public class LockAlreadyAcquiredException extends RuntimeException {
     private final String coordinationNodePath;
     private final String semaphoreName;
 
-    public LockAlreadyAcquiredException(String coordinationNodePath, String semaphoreName) {
+    LockAlreadyAcquiredException(String coordinationNodePath, String semaphoreName) {
         super("Semaphore=" + semaphoreName + " on path=" + coordinationNodePath + " is already acquired");
         this.coordinationNodePath = coordinationNodePath;
         this.semaphoreName = semaphoreName;

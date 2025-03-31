@@ -1,4 +1,4 @@
-package tech.ydb.coordination.recipes.example;
+package tech.ydb.coordination.recipes.example.apps;
 
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.recipes.example.lib.locks.InterProcessLock;
@@ -7,16 +7,15 @@ import tech.ydb.coordination.recipes.example.lib.locks.InterProcessMutex;
 import java.time.Duration;
 import java.util.Scanner;
 
-public class LockApp {
+public class InterProcessMutexApp {
 
     InterProcessLock lock;
 
-    LockApp(CoordinationClient client) {
+    public InterProcessMutexApp(CoordinationClient client) {
         client.createNode("examples/app").join().expectSuccess("cannot create coordination path");
         lock = new InterProcessMutex(
                 client,
                 "examples/app",
-                "data".getBytes(),
                 "default_lock"
         );
     }

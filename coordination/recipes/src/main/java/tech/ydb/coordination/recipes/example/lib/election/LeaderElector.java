@@ -14,8 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
+import tech.ydb.coordination.recipes.example.lib.locks.LockInternals;
 import tech.ydb.coordination.recipes.example.lib.watch.Participant;
-import tech.ydb.coordination.recipes.example.lib.locks.InterProcessMutex;
 import tech.ydb.coordination.recipes.example.lib.watch.SemaphoreWatchAdapter;
 import tech.ydb.coordination.recipes.example.lib.util.Listenable;
 import tech.ydb.coordination.recipes.example.lib.util.ListenableProvider;
@@ -28,7 +28,7 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
     private final String coordinationNodePath;
     private final String semaphoreName;
     private final ExecutorService electionExecutor;
-    private final InterProcessMutex lock;
+    private final LockInternals lock;
     private final SemaphoreWatchAdapter semaphoreWatchAdapter;
 
     private AtomicReference<State> state = new AtomicReference<>(State.STARTED);
@@ -63,12 +63,12 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
         this.coordinationNodePath = coordinationNodePath;
         this.semaphoreName = semaphoreName;
         this.electionExecutor = executorService;
-        this.lock = new InterProcessMutex(
+        this.lock = new LockInternals(
                 client,
                 coordinationNodePath,
                 semaphoreName
         );
-        this.semaphoreWatchAdapter = new SemaphoreWatchAdapter(lock.getSession(), semaphoreName);
+        this.semaphoreWatchAdapter = new SemaphoreWatchAdapter(lock.getCoordinationSession(), semaphoreName);
         semaphoreWatchAdapter.start();
     }
 
@@ -123,7 +123,11 @@ public class LeaderElector implements Closeable, ListenableProvider<Coordination
         isLeader = false;
 
         try {
-            lock.acquire();
+            lock.tryAcquire(
+                    null,
+                    true,
+                    null
+            );
             isLeader = true;
             try {
                 leaderElectionListener.takeLeadership();
