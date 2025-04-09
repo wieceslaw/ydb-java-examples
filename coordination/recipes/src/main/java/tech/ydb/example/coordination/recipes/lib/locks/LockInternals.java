@@ -142,23 +142,30 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     }
 
     // TODO: interruptible?
-    public synchronized boolean release() {
+    public boolean release() {
         logger.debug("Trying to release");
         if (leaseData == null) {
             logger.debug("Already released");
             return false;
         }
 
-        try {
-            return leaseData.getProcessLease().release().thenApply(it -> {
-                logger.debug("Released lock");
-                leaseData = null;
-                return true;
-            }).get();
-        } catch (ExecutionException e) {
-            throw new RuntimeException(e);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+        synchronized (this) {
+            if (leaseData == null) {
+                logger.debug("Already released");
+                return false;
+            }
+
+            try {
+                return leaseData.getProcessLease().release().thenApply(it -> {
+                    logger.debug("Released lock");
+                    leaseData = null;
+                    return true;
+                }).get();
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -169,7 +176,7 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
      * @throws LockAlreadyAcquiredException
      * @throws LockAcquireFailedException
      */
-    // TODO: deadlock? Move synchronized?
+    // TODO: deadlock?
     public synchronized LeaseData tryAcquire(
             @Nullable Instant deadline,
             boolean exclusive,
