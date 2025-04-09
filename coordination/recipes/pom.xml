@@ -14,6 +14,10 @@
     <name>YDB Coordination Service recipes example</name>
     <packaging>jar</packaging>
 
+    <properties>
+        <junit5.version>5.10.1</junit5.version>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
@@ -27,6 +31,19 @@
         <dependency>
             <groupId>tech.ydb.auth</groupId>
             <artifactId>yc-auth-provider</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>tech.ydb.test</groupId>
+            <artifactId>ydb-junit5-support</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${junit5.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -47,7 +64,7 @@
                         <manifest>
                             <addClasspath>true</addClasspath>
                             <classpathPrefix>libs/</classpathPrefix>
-                            <mainClass>tech.ydb.coordination.recipes.example.Main</mainClass>
+                            <mainClass>tech.ydb.example.coordination.recipes.Main</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
