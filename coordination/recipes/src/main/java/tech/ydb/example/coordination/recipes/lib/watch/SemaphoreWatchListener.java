@@ -25,17 +25,17 @@ import tech.ydb.coordination.settings.WatchSemaphoreMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.Status;
 
-public class SemaphoreWatchListener implements ListenableAdder<WatchData>, ListenableProvider<WatchData>, Closeable {
+public class SemaphoreWatchListener implements ListenableProvider<WatchData>, Closeable {
     private static final Logger logger = LoggerFactory.getLogger(SemaphoreWatchListener.class);
 
     private final CoordinationSession session;
     private final String semaphoreName;
     private final ListenerWrapper<WatchData> listenableWrapper;
+    private final AtomicReference<State> state;
+    private final Set<Consumer<WatchData>> listeners;
 
-    private AtomicReference<State> state;
     private Future<Void> watchTask;
     private volatile WatchData watchData;
-    private Set<Consumer<WatchData>> listeners;
 
     public SemaphoreWatchListener(CoordinationSession session, String semaphoreName) {
         this.session = session;
@@ -44,7 +44,17 @@ public class SemaphoreWatchListener implements ListenableAdder<WatchData>, Liste
         this.watchTask = null;
         this.watchData = null;
         this.listeners = new HashSet<>();
-        this.listenableWrapper = new ListenerWrapper<>(this);
+        this.listenableWrapper = new ListenerWrapper<>(new ListenableAdder<WatchData>() {
+            @Override
+            public void addListener(Consumer<WatchData> listener) {
+                listeners.add(listener);
+            }
+
+            @Override
+            public void removeListener(Consumer<WatchData> listener) {
+                listeners.remove(listener);
+            }
+        });
     }
 
     public enum State {
@@ -174,16 +184,6 @@ public class SemaphoreWatchListener implements ListenableAdder<WatchData>, Liste
     @Override
     public Listenable<WatchData> getListenable() {
         return listenableWrapper;
-    }
-
-    @Override
-    public void addListener(Consumer<WatchData> listener) {
-        listeners.add(listener);
-    }
-
-    @Override
-    public void removeListener(Consumer<WatchData> listener) {
-        listeners.remove(listener);
     }
 
     @Override

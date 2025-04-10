@@ -18,9 +18,7 @@ import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.SemaphoreLease;
 import tech.ydb.coordination.description.SemaphoreDescription;
-import tech.ydb.example.coordination.recipes.lib.util.Listenable;
-import tech.ydb.example.coordination.recipes.lib.util.ListenableProvider;
-import tech.ydb.example.coordination.recipes.lib.util.SessionListenerWrapper;
+import tech.ydb.example.coordination.recipes.lib.util.*;
 import tech.ydb.coordination.settings.DescribeSemaphoreMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.Status;
@@ -34,10 +32,10 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     private final String coordinationNodePath;
     private final String semaphoreName;
     private final CoordinationSession session;
-    private final SessionListenerWrapper sessionListenerWrapper;
+    private final ListenerWrapper<CoordinationSession.State> sessionListenerWrapper;
 
     private CompletableFuture<Status> sessionConnectionTask = null;
-    private volatile LeaseData leaseData = null;
+    private volatile LeaseData leaseData = null; // TODO: needs to be volatile?
 
     public static class LeaseData {
         private final SemaphoreLease processLease;
@@ -73,7 +71,19 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
         this.coordinationNodePath = coordinationNodePath;
         this.semaphoreName = lockName;
         this.session = client.createSession(coordinationNodePath);
-        this.sessionListenerWrapper = new SessionListenerWrapper(session);
+        this.sessionListenerWrapper = new ListenerWrapper<>(
+                new ListenableAdder<CoordinationSession.State>() {
+                    @Override
+                    public void addListener(Consumer<CoordinationSession.State> listener) {
+                        session.addStateListener(listener);
+                    }
+
+                    @Override
+                    public void removeListener(Consumer<CoordinationSession.State> listener) {
+                        session.removeStateListener(listener);
+                    }
+                }
+        );
     }
 
     public void start() {
@@ -142,30 +152,23 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     }
 
     // TODO: interruptible?
-    public boolean release() {
+    public synchronized boolean release() {
         logger.debug("Trying to release");
         if (leaseData == null) {
             logger.debug("Already released");
             return false;
         }
 
-        synchronized (this) {
-            if (leaseData == null) {
-                logger.debug("Already released");
-                return false;
-            }
-
-            try {
-                return leaseData.getProcessLease().release().thenApply(it -> {
-                    logger.debug("Released lock");
-                    leaseData = null;
-                    return true;
-                }).get();
-            } catch (ExecutionException e) {
-                throw new RuntimeException(e);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+        try {
+            return leaseData.getProcessLease().release().thenApply(it -> {
+                logger.debug("Released lock");
+                leaseData = null;
+                return true;
+            }).get();
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -182,38 +185,29 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
             boolean exclusive,
             byte[] data
     ) throws Exception {
-        /*
-        Если захватили первый раз - берем как есть
-
-        Если захватили повторно:
-            if (exclusivePrev) {
-                if (!exclusive) {
-                    // нельзя с write перейти на read
-                } else {
-                    // нельзя захватывать write повторно
-                }
-            } else {
-                if (!exclusive) {
-                    // нельзя захватывать read повторно
-                } else {
-                    // переходим с read на write
-                }
-            }
-         */
         logger.debug("Trying to acquire with deadline: {}, exclusive: {}", deadline, exclusive);
-        LeaseData leaseData = this.leaseData;
+
         if (leaseData != null) {
-            logger.debug("Already acquired lock: {}", semaphoreName);
-            throw new LockAlreadyAcquiredException(coordinationNodePath, semaphoreName);
+            if (leaseData.isExclusive() == exclusive) {
+                throw new LockAlreadyAcquiredException(
+                        coordinationNodePath,
+                        semaphoreName
+                );
+            }
+            if (!leaseData.isExclusive() && exclusive) {
+                throw new LockUpgradeFailedException(
+                        coordinationNodePath,
+                        semaphoreName
+                );
+            }
         }
 
-        Optional<SemaphoreLease> lease = tryBlockingLock(deadline, false, data);
+        Optional<SemaphoreLease> lease = tryBlockingLock(deadline, exclusive, data);
         if (lease.isPresent()) {
             leaseData = new LeaseData(lease.get(), exclusive);
             logger.debug("Successfully acquired lock: {}", semaphoreName);
             return leaseData;
         }
-
         logger.debug("Unable to acquire lock: {}", semaphoreName);
         return null;
     }

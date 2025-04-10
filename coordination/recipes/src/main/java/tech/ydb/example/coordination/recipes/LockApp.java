@@ -1,8 +1,6 @@
 package tech.ydb.example.coordination.recipes;
 
-import tech.ydb.auth.AuthRpcProvider;
 import tech.ydb.coordination.CoordinationClient;
-import tech.ydb.core.grpc.GrpcTransport;
 import tech.ydb.example.coordination.recipes.lib.locks.LockInternals;
 
 import java.time.Duration;
@@ -12,20 +10,14 @@ public class LockApp {
 
     LockInternals lock;
 
-    LockApp(String connectionString) {
-        try (GrpcTransport transport = GrpcTransport.forConnectionString(connectionString)
-                .withAuthProvider((AuthRpcProvider<Object>) o -> null)
-                .build()) {
-
-            CoordinationClient client = CoordinationClient.newClient(transport);
-            client.createNode("examples/app").join().expectSuccess("cannot create coordination path");
-            lock = new LockInternals(
-                    client,
-                    "examples/app",
-                    "default_lock"
-            );
-            lock.start();
-        }
+    LockApp(CoordinationClient client) {
+        client.createNode("examples/app").join().expectSuccess("cannot create coordination path");
+        lock = new LockInternals(
+                client,
+                "examples/app",
+                "default_lock"
+        );
+        lock.start();
     }
 
     public void lock(Duration timeout, boolean exclusive) {

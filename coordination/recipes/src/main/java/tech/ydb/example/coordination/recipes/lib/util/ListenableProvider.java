@@ -1,6 +1,5 @@
 package tech.ydb.example.coordination.recipes.lib.util;
 
-
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 

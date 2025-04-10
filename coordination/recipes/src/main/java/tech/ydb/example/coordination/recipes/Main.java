@@ -3,11 +3,10 @@ package tech.ydb.example.coordination.recipes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import tech.ydb.auth.iam.CloudAuthHelper;
+import tech.ydb.auth.AuthRpcProvider;
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.core.grpc.GrpcTransport;
-
-import java.util.concurrent.locks.Lock;
+import tech.ydb.example.coordination.recipes.apps.ReadWriteLockApp;
 
 public class Main {
     private final static Logger logger = LoggerFactory.getLogger(Main.class);
@@ -19,8 +18,19 @@ public class Main {
         }
 
         String connectionString = args[0];
-        LockApp app = new LockApp(connectionString);
-        app.run();
-        app.close();
+
+        ReadWriteLockApp app = null;
+        try (GrpcTransport transport = GrpcTransport.forConnectionString(connectionString)
+                .withAuthProvider((AuthRpcProvider<Object>) o -> null)
+                .build()) {
+
+            CoordinationClient client = CoordinationClient.newClient(transport);
+            app = new ReadWriteLockApp(client);
+            app.run();
+        } finally {
+            if (app != null) {
+                app.close();
+            }
+        }
     }
 }
