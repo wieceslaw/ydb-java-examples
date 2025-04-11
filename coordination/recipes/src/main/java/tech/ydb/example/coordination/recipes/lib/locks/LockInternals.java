@@ -1,7 +1,6 @@
 package tech.ydb.example.coordination.recipes.lib.locks;
 
 import java.io.Closeable;
-import java.rmi.dgc.Lease;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -17,9 +16,7 @@ import org.slf4j.LoggerFactory;
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.coordination.CoordinationSession;
 import tech.ydb.coordination.SemaphoreLease;
-import tech.ydb.coordination.description.SemaphoreDescription;
 import tech.ydb.example.coordination.recipes.lib.util.*;
-import tech.ydb.coordination.settings.DescribeSemaphoreMode;
 import tech.ydb.core.Result;
 import tech.ydb.core.Status;
 import tech.ydb.core.StatusCode;
@@ -40,10 +37,12 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     public static class LeaseData {
         private final SemaphoreLease processLease;
         private final boolean isExclusive;
+        private final long leaseSessionId;
 
-        public LeaseData(SemaphoreLease processLease, boolean isExclusive) {
+        public LeaseData(SemaphoreLease processLease, boolean isExclusive, long leaseSessionId) {
             this.processLease = processLease;
             this.isExclusive = isExclusive;
+            this.leaseSessionId = leaseSessionId;
         }
 
         public boolean isExclusive() {
@@ -54,11 +53,16 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
             return processLease;
         }
 
+        public long getLeaseSessionId() {
+            return leaseSessionId;
+        }
+
         @Override
         public String toString() {
             return "LeaseData{" +
                     "processLease=" + processLease +
                     ", isExclusive=" + isExclusive +
+                    ", leaseSessionId=" + leaseSessionId +
                     '}';
         }
     }
@@ -101,12 +105,12 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
                 }
                 case CLOSED: {
                     logger.debug("Session CLOSED, releasing lock");
-                    release();
+                    leaseData = null;
                     break;
                 }
                 case LOST: {
                     logger.debug("Session LOST, releasing lock");
-                    release();
+                    leaseData = null;
                     break;
                 }
             }
@@ -128,27 +132,20 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
     }
 
     private void reconnect() {
-        // TODO: check id on reconnect
-        CoordinationSession coordinationSession = connectedSession();
-        coordinationSession.describeSemaphore(
-                semaphoreName,
-                DescribeSemaphoreMode.WITH_OWNERS_AND_WAITERS
-        ).thenAccept(result -> {
-            if (!result.isSuccess()) {
-                logger.error("Unable to describe semaphore {}", semaphoreName);
-                return;
-            }
-            SemaphoreDescription semaphoreDescription = result.getValue();
-            SemaphoreDescription.Session owner = semaphoreDescription.getOwnersList().stream().findFirst().get();
-            if (owner.getId() != coordinationSession.getId()) {
-                logger.warn(
-                        "Current session with id: {} lost lease after reconnection on semaphore: {}",
-                        owner.getId(),
-                        semaphoreName
-                );
-                release();
-            }
-        });
+        LeaseData currentLeaseData = leaseData;
+        CoordinationSession coordinationSession = session;
+        long oldId = currentLeaseData.getLeaseSessionId();
+        long newId = coordinationSession.getId();
+        if (oldId != newId) {
+            logger.warn(
+                    "Current session with new id: {} lost lease after reconnection on semaphore: {}",
+                    newId,
+                    semaphoreName
+            );
+            leaseData = null;
+        } else {
+            logger.debug("Successfully reestablished session with same id: {}", newId);
+        }
     }
 
     // TODO: interruptible?
@@ -160,14 +157,15 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
         }
 
         try {
-            return leaseData.getProcessLease().release().thenApply(it -> {
-                logger.debug("Released lock");
-                leaseData = null;
-                return true;
-            }).get();
-        } catch (ExecutionException e) {
-            throw new RuntimeException(e);
-        } catch (InterruptedException e) {
+            boolean releasedSuccess = leaseData.getProcessLease().release()
+                    .thenApply(it -> {
+                        logger.debug("Released lock");
+                        return true;
+                    })
+                    .get();
+            leaseData = null;
+            return releasedSuccess;
+        } catch (ExecutionException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
@@ -204,7 +202,7 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
 
         Optional<SemaphoreLease> lease = tryBlockingLock(deadline, exclusive, data);
         if (lease.isPresent()) {
-            leaseData = new LeaseData(lease.get(), exclusive);
+            leaseData = new LeaseData(lease.get(), exclusive, 1);
             logger.debug("Successfully acquired lock: {}", semaphoreName);
             return leaseData;
         }
@@ -230,6 +228,7 @@ public class LockInternals implements ListenableProvider<CoordinationSession.Sta
                 timeout = Duration.between(Instant.now(), deadline); // TODO: use external Clock instead of Instant?
             }
 
+//            leaseSessionId = coordinationSession.getId();
             CompletableFuture<Result<SemaphoreLease>> acquireTask = coordinationSession.acquireEphemeralSemaphore(
                     semaphoreName, exclusive, data, timeout // TODO: change Session API to use deadlines
             );

@@ -16,7 +16,8 @@ import tech.ydb.example.coordination.recipes.lib.util.ListenableProvider;
 public class ReadWriteInterProcessLock implements Closeable {
     private static final Logger logger = LoggerFactory.getLogger(ReadWriteInterProcessLock.class);
 
-    private final LockInternals lockInternals;
+    private final LockInternals readLockInternals;
+    private final LockInternals writeLockInternals;
     private final InternalLock readLock;
     private final InternalLock writeLock;
 
@@ -25,14 +26,17 @@ public class ReadWriteInterProcessLock implements Closeable {
             String coordinationNodePath,
             String lockName
     ) {
-        this.lockInternals = new LockInternals(
+        this.readLockInternals = new LockInternals(
                 client, coordinationNodePath, lockName
         );
-        lockInternals.start();
+        readLockInternals.start();
+        this.readLock = new InternalLock(readLockInternals, false);
 
-        // TODO: use different locks
-        this.readLock = new InternalLock(lockInternals, false);
-        this.writeLock = new InternalLock(lockInternals, true);
+        this.writeLockInternals = new LockInternals(
+                client, coordinationNodePath, lockName
+        );
+        writeLockInternals.start();
+        this.writeLock = new InternalLock(writeLockInternals, true);
     }
 
     public InterProcessLock writeLock() {
@@ -40,7 +44,6 @@ public class ReadWriteInterProcessLock implements Closeable {
     }
 
     public InterProcessLock readLock() {
-        // TODO: Если сделали acquire для read lock, когда уже есть write lock? Сейчас игнорим
         return readLock;
     }
 
@@ -55,11 +58,6 @@ public class ReadWriteInterProcessLock implements Closeable {
 
         @Override
         public void acquire() throws Exception {
-            if (!isExclusive && isAcquired(true)) {
-                logger.debug("Write lock acquired, skipping for read lock");
-                return;
-            }
-
             lockInternals.tryAcquire(
                     null,
                     isExclusive,
@@ -71,11 +69,6 @@ public class ReadWriteInterProcessLock implements Closeable {
         public boolean acquire(Duration waitDuration) throws Exception {
             Objects.requireNonNull(waitDuration, "wait duration must not be null");
 
-            if (!isExclusive && isAcquired(true)) {
-                logger.debug("Write lock acquired, skipping for read lock");
-                return true;
-            }
-
             Instant deadline = Instant.now().plus(waitDuration);
             return lockInternals.tryAcquire(
                     deadline,
@@ -86,24 +79,12 @@ public class ReadWriteInterProcessLock implements Closeable {
 
         @Override
         public boolean release() {
-            if (!isAcquiredInThisProcess()) {
-                return false;
-            }
-
             return lockInternals.release();
         }
 
         @Override
         public boolean isAcquiredInThisProcess() {
-            return isAcquired(isExclusive);
-        }
-
-        private boolean isAcquired(boolean exclusive) {
-            LockInternals.LeaseData leaseData = lockInternals.getLeaseData();
-            if (leaseData == null) {
-                return false;
-            }
-            return leaseData.isExclusive() == exclusive;
+            return lockInternals.isAcquired();
         }
 
         @Override
@@ -114,7 +95,8 @@ public class ReadWriteInterProcessLock implements Closeable {
 
     @Override
     public void close() {
-        lockInternals.close();
+        readLockInternals.close();
+        writeLockInternals.close();
     }
 
 }

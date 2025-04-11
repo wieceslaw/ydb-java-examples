@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import tech.ydb.auth.AuthRpcProvider;
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.core.grpc.GrpcTransport;
-import tech.ydb.example.coordination.recipes.apps.ReadWriteLockApp;
 
 public class Main {
     private final static Logger logger = LoggerFactory.getLogger(Main.class);
@@ -19,13 +18,13 @@ public class Main {
 
         String connectionString = args[0];
 
-        ReadWriteLockApp app = null;
+        LockApp app = null;
         try (GrpcTransport transport = GrpcTransport.forConnectionString(connectionString)
                 .withAuthProvider((AuthRpcProvider<Object>) o -> null)
                 .build()) {
 
             CoordinationClient client = CoordinationClient.newClient(transport);
-            app = new ReadWriteLockApp(client);
+            app = new LockApp(client);
             app.run();
         } finally {
             if (app != null) {

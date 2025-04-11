@@ -57,8 +57,8 @@ public class GroupMemberImpl implements GroupMembership {
     @Override
     public Set<GroupMember> getCurrentMembers() {
         return semaphoreWatchListener.getParticipants().stream().map(it -> new GroupMember(
-                groupId,
-                , // TODO: get ID from data
+                currentMemberInfo.getGroupId(),
+                "", // TODO: get ID from data
                 it.getData()
         )).collect(Collectors.toSet());
     }
