@@ -1,20 +1,23 @@
 package tech.ydb.example.coordination.recipes.lib.locks;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tech.ydb.auth.AuthRpcProvider;
 import tech.ydb.coordination.CoordinationClient;
 import tech.ydb.core.grpc.GrpcTransport;
 import tech.ydb.test.junit5.YdbHelperExtension;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class InterProcessMutexTest {
     private static final Logger log = LoggerFactory.getLogger(InterProcessMutexTest.class);
@@ -22,168 +25,104 @@ public class InterProcessMutexTest {
     @RegisterExtension
     private static final YdbHelperExtension ydb = new YdbHelperExtension();
 
-    private static String connectionString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(ydb.useTls() ? "grpcs://" : "grpc://");
-        sb.append(ydb.endpoint());
-        sb.append(ydb.database());
-        return sb.toString();
+    private static GrpcTransport ydbTransport;
+    private static CoordinationClient client;
+
+    @BeforeAll
+    public static void init() {
+        ydbTransport = ydb.createTransport();
+        client = CoordinationClient.newClient(ydbTransport);
     }
 
-    @Test
-    public void startUp() {
-        try (GrpcTransport transport = GrpcTransport.forConnectionString(connectionString())
-                .withAuthProvider((AuthRpcProvider<Object>) o -> null)
-                .build()) {
-
-            CoordinationClient client = CoordinationClient.newClient(transport);
-            client.createNode("examples/app").join().expectSuccess("cannot create coordination path");
-            ReadWriteInterProcessLock lock = new ReadWriteInterProcessLock(
-                    client,
-                    "examples/app",
-                    "default_lock"
-            );
-            test(lock);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    public void test(ReadWriteInterProcessLock lock) throws Exception {
-        // scenario:
-        // lock()
-        // sleep()
-        // unlock()
-
-        lock.readLock().acquire();
-        assertThrows(
-                LockUpgradeFailedException.class,
-                () -> lock.writeLock().acquire(),
-                "Unable to upgrade from read lock to write lock"
-        );
-        assertThrows(
-                LockAlreadyAcquiredException.class,
-                () -> lock.readLock().acquire(),
-                "Read lock is already acquired"
-        );
+    @AfterAll
+    public static void clean() {
+        ydbTransport.close();
     }
 
     /**
      * Asserts that code does not throw any exceptions
      */
     @Test
-    void simpleReadLockTest() throws Exception {
-        ReadWriteInterProcessLock lock = getReadWriteInterProcessLock();
+    void simpleLockTest() throws Exception {
+        InterProcessMutex lock = getInterProcessMutex();
 
-        InterProcessLock readLock = lock.readLock();
-        readLock.acquire();
+        lock.acquire();
         Thread.sleep(100);
-        readLock.release();
+        lock.release();
     }
 
     /**
-     * Asserts that code does not throw any exceptions
+     * Asserts that there is no data race around counter that is protected by distributed lock
+     * When locksN sessions tries to acquire lock at the same time
      */
     @Test
-    void simpleWriteLockTest() throws Exception {
-        ReadWriteInterProcessLock lock = getReadWriteInterProcessLock();
-
-        InterProcessLock writeLock = lock.writeLock();
-        writeLock.acquire();
-        Thread.sleep(100);
-        writeLock.release();
-    }
-
-    /**
-     * Asserts that code does not throw any exceptions
-     */
-    @Test
-    void combinedReadAndWriteLockTest() throws Exception {
-        ReadWriteInterProcessLock lock = getReadWriteInterProcessLock();
-
-        InterProcessLock readLock = lock.readLock();
-        InterProcessLock writeLock = lock.writeLock();
-
-        readLock.acquire();
-        Thread.sleep(100);
-        readLock.release();
-
-        writeLock.acquire();
-        Thread.sleep(100);
-        writeLock.release();
-    }
-
-    @Test
-    void concurrentReadAndWriteLockTest() throws Exception {
-        String nodePath = "NodePathConcurrentReadAndWriteLockTest";
-        String lockName = "LockNameConcurrentReadAndWriteLockTest";
-
-        ReadWriteInterProcessLock lock1 = getReadWriteInterProcessLock(nodePath, lockName);
-        ReadWriteInterProcessLock lock2 = getReadWriteInterProcessLock(nodePath, lockName);
-
-        InterProcessLock readLock = lock1.readLock();
-        InterProcessLock writeLock = lock2.writeLock();
-
-        int readTaskCycles = 5;
-        int writeTaskCycles = 5;
-
-        // Вопросы:
-
-        // Тесты распределенной конкурентности -- сколько циклов? показывают что-то реально?
-        // Тесты при разрыве сессии -- как реализовать?
-
-        // Положительные кейсы
-        // Отрицательные кейсы
-
-        // 1) нет ошибок
-        // 2) лок действительно берется и создается, тем кем надо? Через соседнее подключение и describe?
-
-        // Вокруг каждый функциональности (по описанию интерфейса)
-
+    void concurrentLockTest() {
+        // given
         ExecutorService executor = Executors.newFixedThreadPool(2);
+        int cycles = 10;
+        int locksN = 10;
 
-        Future<?> readLockTask = executor.submit(() -> {
-            try {
-                for (int i = 0; i < readTaskCycles; i++) {
-                    readLock.acquire();
-                    log.debug("Read lock acquired");
-                    Thread.sleep(100);
-                    readLock.release();
+        String nodePath = UUID.randomUUID().toString();
+        String lockName = UUID.randomUUID().toString();
+        List<InterProcessMutex> locks = new ArrayList<>(locksN);
+        for (int i = 0; i < locksN; i++) {
+            locks.add(getInterProcessMutex(nodePath, lockName));
+        }
+
+        AtomicInteger counter = new AtomicInteger(0);
+
+        // when
+        List<Callable<Void>> tasks = locks.stream().map(lock ->
+                (Callable<Void>) () -> {
+                    for (int i = 0; i < cycles; i++) {
+                        lock.acquire();
+                        int start = counter.get();
+                        log.debug("Lock acquired, cycle = {}, count = {}", i, start);
+                        Thread.sleep(100);
+                        counter.set(start + 1);
+                        log.debug("Lock released, cycle = {}", i);
+                        lock.release();
+                    }
+                    return null;
                 }
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
+        ).collect(Collectors.toList());
 
-        Future<?> writeLockTask = executor.submit(() -> {
-            try {
-                for (int i = 0; i < writeTaskCycles; i++) {
-                    writeLock.acquire();
-                    log.debug("Write lock acquired");
-                    Thread.sleep(100);
-                    writeLock.release();
+        try {
+            List<Future<Void>> futures = executor.invokeAll(tasks);
+            futures.forEach(future -> {
+                try {
+                    future.get();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
                 }
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
+            });
+        } catch (Exception ignored) {
+        }
 
-        writeLockTask.get();
-        readLockTask.get();
+        // then
+        assertEquals(cycles * locksN, counter.get());
 
         executor.shutdown();
     }
 
-    ReadWriteInterProcessLock getReadWriteInterProcessLock() {
-        return getReadWriteInterProcessLock(UUID.randomUUID().toString(), UUID.randomUUID().toString());
+    // Тесты распределенной конкурентности -- сколько циклов? показывают что-то реально?
+    // Тесты при разрыве сессии -- мок
+
+    // Положительные кейсы
+    // Отрицательные кейсы
+
+    // 1) нет ошибок
+    // 2) лок действительно берется и создается, тем кем надо? Через соседнее подключение и describe?
+
+    // Вокруг каждый функциональности (по описанию интерфейса)
+
+    InterProcessMutex getInterProcessMutex() {
+        return getInterProcessMutex(UUID.randomUUID().toString(), UUID.randomUUID().toString());
     }
 
-    // TODO: close?
-    ReadWriteInterProcessLock getReadWriteInterProcessLock(String nodePath, String lockName) {
-        GrpcTransport ydbTransport = ydb.createTransport();
-        CoordinationClient client = CoordinationClient.newClient(ydbTransport);
+    InterProcessMutex getInterProcessMutex(String nodePath, String lockName) {
         client.createNode(nodePath).join().expectSuccess("cannot create coordination path");
-        ReadWriteInterProcessLock lock = new ReadWriteInterProcessLock(
+        InterProcessMutex lock = new InterProcessMutex(
                 client,
                 nodePath,
                 lockName
